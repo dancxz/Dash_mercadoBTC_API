@@ -143,6 +143,8 @@ def ticker_table(n):
     table = pd.read_csv('read_dash.csv')
     return generate_table(table)
 
+
+# deste modo consigo compartilhar a Dash com todos na rede local
 app.scripts.config.serve_locally = True        
 if __name__ == '__main__':
 
