@@ -7,6 +7,8 @@ import time
 import datetime
 from API import Trades_MercadoBTC
 
+
+# Agendo para a cada 20 segundos rodar save_new_trades
 schedule.every(20).seconds.do(Trades_MercadoBTC.save_new_trades)
 
 print('Inicio as - {}'.format(datetime.datetime.now()))
