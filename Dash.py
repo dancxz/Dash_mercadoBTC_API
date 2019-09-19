@@ -1,12 +1,4 @@
-#DashBoard Ainda em produção!
-# Feita para melhorar e visualizao de como esta o volume do mercadoBTC nos ultimos dias
-# A cada 30 segundos leio o banco e retorno um arquvio csv de com os dados para a tabela e graficos
-# A cada 15 segundos leio o csv para gerar a tabela e graficos
-## Existem pontos a serem melhorados e ja conhecimo alem do layout 
-
-
 import dash
-import dash_auth
 import dash_core_components as dcc
 import dash_html_components as html
 from dash.dependencies import Input, Output, State
@@ -14,59 +6,47 @@ from dash.dependencies import Input, Output, State
 import pandas as pd
 import sqlite3
 import datetime
+import time
 
 import plotly.graph_objs as go
 import socket
 
-# Para não ter quer ler o banco 2 vezes a cada atualização crio essa função que me gera um arquivo para leitura
-# Le o banco na tabela Mercado_BTC para gerar o csv de leitura constante
-def live_file():
+def dados_mercado():
     conn = sqlite3.connect('Corretoras.db') 
-    min_date =pd.to_datetime(pd.read_sql_query("SELECT MAX(date) FROM Mercado_BTC",conn).values[0][0]).date()- datetime.timedelta(31)
-    table = pd.read_sql_query("SELECT * FROM Mercado_BTC Where date > '{}'".format(str(min_date)),conn)
+
+    query = """SELECT  date(MB.date_brt) AS Data,
+    SUM(MB.amount_brl) AS Volume,
+    MIN(MB.price) AS Mínimo,
+    MAX(MB.price) AS Máximo,
+    SUM(CASE WHEN MB.type = 'buy' THEN MB.amount_brl 
+         ELSE 0
+         END) as Volume_Compra,
+    SUM(CASE WHEN MB.type = 'sell' THEN MB.amount_brl 
+         ELSE 0
+         END) as Volume_Venda
+    FROM Mercado_BTC AS MB
+    WHERE MB.date_brt >= (SELECT date(max(date_brt), "-15 day") FROM Mercado_BTC)
+    group by date(MB.date_brt)"""
+    
+    table = pd.read_sql_query(query,conn)
     conn.close()
+    table['Data'] = pd.to_datetime(table['Data'])
+    return table
 
-    table['date_brt'] = pd.to_datetime(table['date_brt'])
-    table['date_brt'] = table['date_brt'].apply(lambda x: x.date())
-
-    table_pivot = table.pivot_table(index='date_brt',values='amount',aggfunc='sum').reset_index()
-    table_pivot['amount'] = table_pivot['amount'].apply(lambda x: round(x,5))
-    table_pivot.rename(columns={'amount':'Valor Total','date_brt':'Data'},inplace=True)
-    table_pivot.to_csv('read_dash.csv',index=False)
-    conn.close()
-
-live_file()
-
-# Crio uma chave de acesso para a Dash
-VALID_USERNAME_PASSWORD_PAIRS = [
-    ['hello', 'world']
-]
-
-app = dash.Dash('auth')
-auth = dash_auth.BasicAuth(
-    app,
-    VALID_USERNAME_PASSWORD_PAIRS
-)
-
-# função que me gera os graficos
-def grafico(table):
-
-    trace1 = go.Bar(
-        x=table['Data'].tolist(),
-        y=table['Valor Total'].tolist(),
-        name = 'realizado'
+def grafico_barras(table,colx,coly,nome,titulo,t_colx,t_coly):
+    trace = go.Bar(
+        x=table[colx].tolist(),
+        y=table[coly].tolist(),
+        name = nome
     )
-
-    data = [trace1]
-
-    layout = dict(title = 'Volume diário',
-                  xaxis = dict(title = 'Data'),
-                  yaxis = dict(title = 'R$'),
+    data = [trace]
+    layout = dict(title = titulo,
+                  xaxis = dict(title = t_colx),
+                  yaxis = dict(title = t_coly),
                   )
     fig = dict(data=data, layout=layout)
     return fig
 
-# Função para a tabela
 def generate_table(dataframe, max_rows=10):
     return html.Table(
         # Header
@@ -75,79 +55,45 @@ def generate_table(dataframe, max_rows=10):
         [html.Tr([
             html.Td(dataframe.iloc[i][col]) for col in dataframe.columns
         ]) for i in range(min(len(dataframe), max_rows))]
-    )
+    )    
 
-app.css.append_css({"external_url": "https://codepen.io/chriddyp/pen/bWLwgP.css"})
+external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
+app = dash.Dash(__name__, external_stylesheets=external_stylesheets,suppress_callback_exceptions=True)
+app.title = 'Dados Relacao '
 
-# defino como sera a pagina principal 
-page1 = html.Div([
-    html.Div([html.Div(id='Output_temp'),
-        dcc.Interval(
-            id='interval-component_update',
-            interval=30*1000, # in milliseconds
-            n_intervals=0)
-        ]),
-    html.Div([
+layout = html.Div([
         html.H4('Volume do Mercado Bitcoin'),
         dcc.Graph(id='live-update-graph',className="six columns"),
         html.H4('Volume das Corretoras'),
-        html.Div(id='table'),
+        html.Div(id='live-update-table'),
         dcc.Interval(
             id='interval-component',
             interval=15*1000, # in milliseconds
             n_intervals=0)
-    ]),
- ])
-
-# Caso não exista a pagina retornara 404 Page not found
-noPage = html.Div([  # 404
-
-    html.P(["404 Page not found"])
-
-    ], className="no-page")
-
-app.config.suppress_callback_exceptions = True
-
-app.layout = html.Div([
-    dcc.Location(id='url', refresh=False),
-    html.Div(id='page-content')
-])
-
-# callback para gerar um novo arquivo de leitura
-@app.callback(Output('Output_temp', 'children'),
-            [Input('interval-component_update', 'n_intervals')])
-
-# Le o banco na tabela Mercado_BTC para gerar o csv de leitura constante
-def execut_live_file(n):
-	live_file()
-
-# callback dos url
-@app.callback(Output('page-content', 'children'),
-              [Input('url', 'pathname')])
-def display_page(pathname):
-    if pathname == '/' or pathname == '/Page1':
-        return page1
-    else:
-        return noPage
-
+    ])
+app.layout = layout 
 # callback do grafico
 @app.callback(Output('live-update-graph', 'figure'),
               [Input('interval-component', 'n_intervals')])
 def grafico_live(n):
-    table = pd.read_csv('read_dash.csv')
-    return grafico(table)
+    global tabela
+    tabela = dados_mercado()
+    #table = pd.read_csv('read_dash.csv')
+    return grafico_barras(tabela,'Data','Volume','Volume Negociações BRL','Volume Diário','Data','R$')
 
 # callback da tabela
-@app.callback(Output('table', 'children'),
+@app.callback(Output('live-update-table', 'children'),
               [Input('interval-component', 'n_intervals')])
 def ticker_table(n):
-    table = pd.read_csv('read_dash.csv')
-    table['Valor Total'] = table['Valor Total'].apply(lambda x: round(x,5))
-    return generate_table(table)
+    time.sleep(2)
+    
+    tabela ['Volume'] = tabela['Volume'].apply(lambda x: round(x,4))
+    tabela ['Mínimo'] = tabela['Mínimo'].apply(lambda x: round(x,2))
+    tabela ['Máximo'] = tabela['Máximo'].apply(lambda x: round(x,2))
 
-# deste modo consigo compartilhar a Dash com todos na rede local
-app.scripts.config.serve_locally = True        
+    return generate_table(tabela[['Data','Volume','Mínimo','Máximo']].tail(9))
+
+app.scripts.config.serve_locally = True
 if __name__ == '__main__':
-
-    ip =  socket.gethostbyname(socket.gethostname())    
+    ip =  socket.gethostbyname(socket.gethostname())
     app.run_server(debug= False,host= ip , port=888)
